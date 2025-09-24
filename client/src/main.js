@@ -1,9 +1,9 @@
 // Import required libraries and modules
 
-import { Hands } from '@mediapipe/hands'; // MediaPipe Hands for hand tracking
-import { Camera } from '@mediapipe/camera_utils'; // Camera utilities for video input
-import { StrokeBuffer, CanvasRenderer } from './draw'; // Custom drawing utilities
-import { classifyGesture, interFingers } from './gesture'; // Gesture classification utilities
+// import { Hands } from '@mediapipe/hands'; // MediaPipe Hands for hand tracking
+// import { Camera } from '@mediapipe/camera_utils'; // Camera utilities for video input
+import { StrokeBuffer, CanvasRenderer } from './draw.js'; // Custom drawing utilities
+import { classifyGesture, interFingers } from './gesture.js'; // Gesture classification utilities
 
 // Grab HTML elements
 const video = document.getElementById('cam'); // video element for webcam feed
@@ -11,6 +11,8 @@ const canvas = document.getElementById('board'); // canvas element for drawing
 const clearBtn = document.getElementById('clear'); // button to clear the canvas
 const modeBtn = document.getElementById('mode'); // button to toggle modes (draw, erase, manual)
 const fpsEl = document.getElementById('fps'); // element to display FPS
+
+
 
 // Create helpers for drawing and rendering
 const renderer = new CanvasRenderer(canvas);
@@ -41,10 +43,14 @@ let last = performance.now(); // timestamp of last frame
   requestAnimationFrame(tick); // loop continuously
 })();
 
+// use global provided by the CDN scripts
+
+const Camera = window.Camera;
+
 // MediaPipe Hands setup
-const hands = new Hands({
+const HandsClass = window.Hands;
+const hands = new HandsClass({
   locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`,
-  // Load model files from CDN
 
 });
 
@@ -113,9 +119,10 @@ hands.onResults((res) => {
 // Boot function to start the app
 async function boot() {
   // Ask browser for camera stream (front-facing camera, no audio)
+  const video = document.getElementById('cam');
   const stream = await navigator.mediaDevices.getUserMedia({
     video: { facingMode: 'user'},
-    audio: false
+    audio: false,
   });
 
   // Play the stream in the video element
@@ -125,9 +132,9 @@ async function boot() {
   // MediaPipe Camera wrapper -> sends each frame to "hands" for processing
   const cam = new Camera(video, {
     onFrame: async () => {
-      await hands.send({ image: video})
+      await hands.send({ image: video });
     },
-    width: 640, height: 480 // Input video resolution
+    width: 640, height: 480, // Input video resolution
   });
 
   cam.start(); // start the camera
