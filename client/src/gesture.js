@@ -4,7 +4,7 @@ export function classifyGesture(f) {
     if (f.index && !f.middle && !f.ring && !f.pinky) return 'draw';
 
     // Erase = open palm
-    if (f.thumb && f.index && f.middle && f.ring && f.pinky) return 'erase';
+    if (!f.thumb && f.index && f.middle && !f.ring && !f.pinky) return 'erase';
 
     // otherwise default to pan/zoom (future: more gestures)
     return 'panzoom';

@@ -6,17 +6,21 @@
     <title>Gesture Whiteboard</title>
     <style>
       html, body, main { height: 100%; margin: 0; }
-      #board { width: 100vw; height: 100vh; display: block; background: #fff; }
+      #board, #overlay { width: 100vw; height: 100vh; display: block; display: block; }
       #hud { position: fixed; top: 12px; left: 12px; display: flex; gap: 8px; z-index: 10; }
       button { padding: 6px 10px; border-radius: 8px; border: 1px solid #ddd; background: #f7f7f7; }
+      #overlay { position: fixed; left: 0; top: 0; pointer-events: none; }
     </style>
   </head>
   <body>
     <main>
       <canvas id="board"></canvas>
+      <canvas id="overlay"></canvas>
       <video id="cam" playsinline muted hidden></video>
       <div id="hud">
         <button id="clear">Clear</button>
+        <input id="eraseSize" type="range" min="8" max="96" step="2" value="40" />
+        <label for="eraseSize">Eraser</label>
         <button id="mode">Mode: draw</button>
         <span id="fps">-- fps</span>
       </div>

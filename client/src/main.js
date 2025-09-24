@@ -1,148 +1,176 @@
-// Import required libraries and modules
+// client/src/main.js
 
-// import { Hands } from '@mediapipe/hands'; // MediaPipe Hands for hand tracking
-// import { Camera } from '@mediapipe/camera_utils'; // Camera utilities for video input
-import { StrokeBuffer, CanvasRenderer } from './draw.js'; // Custom drawing utilities
-import { classifyGesture, interFingers } from './gesture.js'; // Gesture classification utilities
+// --- entry probe ---
+console.log('[gesture-whiteboard] main.js loaded');
 
-// Grab HTML elements
-const video = document.getElementById('cam'); // video element for webcam feed
-const canvas = document.getElementById('board'); // canvas element for drawing
-const clearBtn = document.getElementById('clear'); // button to clear the canvas
-const modeBtn = document.getElementById('mode'); // button to toggle modes (draw, erase, manual)
-const fpsEl = document.getElementById('fps'); // element to display FPS
+// CHANGED: use explicit .js extensions + correct file names
+import { StrokeBuffer, CanvasRenderer } from './draw.js';
+import { classifyGesture, interFingers } from './gesture.js';
 
+// NEW: selfie-mode mirroring (flip x only; keeps exports unflipped)
+const MIRROR = true;
 
+// NEW: brush sizing constants (keeps cursor + stroke aligned)
+const BRUSH_DRAW = 3;
+const BRUSH_ERASE = 40;
 
-// Create helpers for drawing and rendering
+// DOM hooks
+const video   = document.getElementById('cam');
+const canvas  = document.getElementById('board');
+const overlay = document.getElementById('overlay'); // NEW: overlay for live cursor
+const clearBtn = document.getElementById('clear');
+const modeBtn  = document.getElementById('mode');
+const fpsEl    = document.getElementById('fps');
+
+// MediaPipe via CDN globals
+// CHANGED: class direct from global (no namespace)
+const HandsClass = window.Hands;
+const Camera     = window.Camera;
+
+// Drawing helpers
 const renderer = new CanvasRenderer(canvas);
-const buffer = new StrokeBuffer();
+const buffer   = new StrokeBuffer();
 
-// Track current state
-let drawing = false; // whether we are currently drawing
-let mode = 'draw'; // Default mode (gesture logic will override)
+// --- NEW: overlay context + helpers (DPI aware) ---
+let octx;
+let oDpi = Math.max(1, window.devicePixelRatio || 1);
 
-// Button Events
-// Clear the canvas completely
-clearBtn.addEventListener('click', () => renderer.clear());
+function resizeOverlay() {
+  if (!overlay) return;
+  const r = overlay.getBoundingClientRect();
+  overlay.width  = Math.round(r.width  * oDpi);
+  overlay.height = Math.round(r.height * oDpi);
+}
+function clearOverlay() {
+  if (overlay && octx) octx.clearRect(0, 0, overlay.width, overlay.height);
+}
+function drawCursor(cx, cy, sizePx, mode) {
+  if (!overlay) return;
+  if (!octx) octx = overlay.getContext('2d');
+  if (!octx) return;
+  clearOverlay();
+  octx.save();
+  octx.lineWidth   = 2 * oDpi;
+  octx.strokeStyle = mode === 'erase' ? 'rgba(220, 38, 38, 0.9)'  // red
+                                      : 'rgba(34, 197, 94, 0.9)'; // green
+  octx.fillStyle   = mode === 'erase' ? 'rgba(220, 38, 38, 0.12)'
+                                      : 'rgba(34, 197, 94, 0.12)';
+  octx.beginPath();
+  octx.arc(cx, cy, sizePx / 2, 0, Math.PI * 2);
+  octx.fill();
+  octx.stroke();
+  octx.restore();
+}
+window.addEventListener('resize', resizeOverlay);
+resizeOverlay();
 
-// toggle mode manually
+// State
+let drawing = false;
+let mode = 'draw';
+
+// UI events
+clearBtn.addEventListener('click', () => {
+  renderer.clear();
+  clearOverlay(); // NEW: also clear cursor ring
+});
 modeBtn.addEventListener('click', () => {
-  mode = mode === 'draw' ? 'erase' : 'draw'; // toggle between draw and erase
-  modeBtn.textContent = `Mode: ${mode}`; // update button text
+  mode = mode === 'draw' ? 'erase' : 'draw';
+  modeBtn.textContent = `Mode: ${mode}`;
 });
 
-// FPS Tracker (performance monitoring)
-
-let last = performance.now(); // timestamp of last frame
+// FPS ticker (unchanged)
+let last = performance.now();
 (function tick() {
-  const now = performance.now(); // current frame time
-  const fps = 1000 / (now - last); // calculate FPS
-  last = now; // update last frame time
-  fpsEl.textContent = `${fps.toFixed(0)} fps`; // show rounded FPS on the screen
-  requestAnimationFrame(tick); // loop continuously
+  const now = performance.now();
+  const fps = 1000 / (now - last);
+  last = now;
+  fpsEl.textContent = `${fps.toFixed(0)} fps`;
+  requestAnimationFrame(tick);
 })();
 
-// use global provided by the CDN scripts
-
-const Camera = window.Camera;
-
-// MediaPipe Hands setup
-const HandsClass = window.Hands;
+// MediaPipe Hands (CHANGED: construct via class directly)
 const hands = new HandsClass({
   locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`,
-
 });
 
-// Configure hand tracking model
 hands.setOptions({
-  maxNumHands: 1, // track only one hand
-  modelComplexity: 1, // full model for better accuracy
-  minDetectionConfidence: 0.7, // minimum confidence to detect hand
-  minTrackingConfidence: 0.7, // minimum confidence to track hand
-})
+  maxNumHands: 1,
+  modelComplexity: 1,
+  minDetectionConfidence: 0.7,
+  minTrackingConfidence: 0.7,
+});
 
-// When MediaPipe produces results
+// Results handler
 hands.onResults((res) => {
-  // if no hand detected, stop drawing
-  if (!res.multiHandLandmarks || !res.multiHandLandmarks[0]){
-    // if we were in the middle of drawing -> end the stroke
-    if (drawing){
-      renderer.drawStroke(buffer.end());
-      drawing = false;
-    }
-    return; // nothing more to do
+  // No hand → end stroke + clear cursor (NEW)
+  if (!res.multiHandLandmarks || !res.multiHandLandmarks[0]) {
+    if (drawing) { renderer.drawStroke(buffer.end()); drawing = false; }
+    clearOverlay(); // NEW
+    return;
   }
 
-  // grab landmarks for the first detected hand
   const lm = res.multiHandLandmarks[0];
 
-  // Turn landmarks -> finger states -> guesture (draw/erase/idle)
+  // Landmarks → finger states → gesture
   const fingers = interFingers(lm);
   mode = classifyGesture(fingers);
-  modeBtn.textContent = `Mode: ${mode}`; // show detected mode
+  modeBtn.textContent = `Mode: ${mode}`;
 
-  // Treack index finger tip position (landmark #8)
+  // CHANGED: mirror x for selfie UX; y unchanged
   const tip = lm[8];
-  const x = tip.x; // Normalized X position (0..1)
-  const y = tip.y; // Normalized Y position (0..1)
+  const x = MIRROR ? (1 - tip.x) : tip.x;
+  const y = tip.y;
 
-  // Drawing / Erasing logic
+  // --- NEW: live cursor ring on overlay ---
+  if (overlay) {
+    // normalized → pixels on overlay
+    const cx = x * overlay.width;
+    const cy = y * overlay.height;
+    const cursorPx = (mode === 'erase' ? BRUSH_ERASE : BRUSH_DRAW) * (window.devicePixelRatio || 1) * 4;
+    drawCursor(cx, cy, cursorPx, mode);
+  }
+
+  // Drawing / erasing
   if (mode === 'draw' || mode === 'erase') {
-    // If starting a new stroke
     if (!drawing) {
       buffer.begin({
-        color: '#111', // dark gray
-        width: mode === 'draw' ? 3 : 16, erase: mode === 'erase'// thin line for drawing, thick for erasing
-        
+        color: '#111',
+        width: mode === 'draw' ? BRUSH_DRAW : BRUSH_ERASE, // CHANGED: use constants
+        erase: mode === 'erase',
       });
-      drawing = true; // now we are in drawing mode
+      drawing = true;
     }
-
-    // Add current finger tip position to the stroke
     buffer.push(x, y);
-
-    // Render the current stroke if we have enough points
-    if (buffer.current && buffer.current.points.length > 1){
+    if (buffer.current && buffer.current.points.length > 1) {
       renderer.drawStroke(buffer.current);
     }
   } else {
-    // Not in drawing/erasing mode -> end stroke if we were drawing
-    if (drawing){
-      renderer.drawStroke(buffer.end());
-      drawing = false;
-    }
-    // TODO: implement pan/zoom logic
-  } 
+    if (drawing) { renderer.drawStroke(buffer.end()); drawing = false; }
+  }
 });
 
-// Boot function to start the app
+// Boot
 async function boot() {
-  // Ask browser for camera stream (front-facing camera, no audio)
-  const video = document.getElementById('cam');
-  const stream = await navigator.mediaDevices.getUserMedia({
-    video: { facingMode: 'user'},
-    audio: false,
-  });
+  try {
+    console.log('[gesture-whiteboard] requesting camera…');
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'user' },
+      audio: false,
+    });
+    video.srcObject = stream;
+    await video.play();
 
-  // Play the stream in the video element
-  video.srcObject = stream;
-  await video.play();
-
-  // MediaPipe Camera wrapper -> sends each frame to "hands" for processing
-  const cam = new Camera(video, {
-    onFrame: async () => {
-      await hands.send({ image: video });
-    },
-    width: 640, height: 480, // Input video resolution
-  });
-
-  cam.start(); // start the camera
-
+    const cam = new Camera(video, {
+      onFrame: async () => { await hands.send({ image: video }); },
+      width: 640,
+      height: 480,
+    });
+    cam.start();
+    console.log('[gesture-whiteboard] camera live');
+  } catch (e) {
+    console.error('Boot failed:', e);
+    alert('Camera access is required: ' + e.message);
+  }
 }
 
-// Start the app, catch errors (e.g. no camera access)
-boot().catch((e) => {
-  console.error(e);
-  alert('Camera access is required for this app to work.');
-})
+boot();
